@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-SOURCE_URL="${ADD_KEY_SOURCE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/aff1097/add_key.sh}"
+SOURCE_URL="${ADD_KEY_SOURCE_URL:-}"
+GITHUB_REPOSITORY="${ADD_KEY_GITHUB_REPOSITORY:-Coloded/add_ssh_key}"
 INSTALL_SCOPE="${ADD_KEY_INSTALL_SCOPE:-}"
 LEGACY_LINK="${HOME}/script/add_key"
 LEGACY_CONFIG="${HOME}/script/add_server_ssh.conf"
@@ -70,6 +71,20 @@ add_path_line() {
   fi
 }
 
+download_file() {
+  local url="$1"
+  local destination="$2"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 10 --max-time 60 "$url" -o "$destination"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --timeout=60 -O "$destination" "$url"
+  else
+    echo "Ошибка: для установки нужен curl или wget."
+    return 1
+  fi
+}
+
 choose_install_scope
 
 if [ -n "${ADD_KEY_INSTALL_DIR:-}" ]; then
@@ -91,15 +106,27 @@ if [ "$INSTALL_SCOPE" = "system" ] && [ "$(id -u)" -ne 0 ]; then
 fi
 
 tmp_file="$(mktemp "${TMPDIR:-/tmp}/add_key-install.XXXXXX")"
-trap 'rm -f "$tmp_file"' EXIT
+api_file="$(mktemp "${TMPDIR:-/tmp}/add_key-api.XXXXXX")"
+trap 'rm -f "$tmp_file" "$api_file"' EXIT
+
+if [ -z "$SOURCE_URL" ]; then
+  api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/main"
+  if ! download_file "$api_url" "$api_file"; then
+    echo "Ошибка: не удалось определить актуальную версию add_key на GitHub."
+    exit 1
+  fi
+  commit_sha="$(awk -F'"' '/^[[:space:]]*"sha"[[:space:]]*:/ {print $4; exit}' "$api_file")"
+  rm -f "$api_file"
+  if ! [[ "$commit_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    echo "Ошибка: GitHub вернул некорректный commit SHA."
+    exit 1
+  fi
+  SOURCE_URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${commit_sha}/add_key.sh"
+fi
 
 echo "Скачиваю add_key с GitHub..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL --connect-timeout 10 --max-time 60 "$SOURCE_URL" -o "$tmp_file"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q --timeout=60 -O "$tmp_file" "$SOURCE_URL"
-else
-  echo "Ошибка: для установки нужен curl или wget."
+if ! download_file "$SOURCE_URL" "$tmp_file"; then
+  echo "Ошибка: не удалось скачать add_key с GitHub."
   exit 1
 fi
 

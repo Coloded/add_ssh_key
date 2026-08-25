@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ADD_KEY_VERSION="2026.08.25.4"
+ADD_KEY_VERSION="2026.08.25.5"
 
 # Remember explicit environment values so that the precedence remains:
 # command line > environment > config file > built-in defaults.
@@ -434,9 +434,51 @@ normalize_update_url() {
   esac
 }
 
+resolve_fresh_github_url() {
+  local download_url="$1"
+  local rest owner repo ref path
+  local api_file api_url commit_sha
+
+  case "$download_url" in
+    https://raw.githubusercontent.com/*) ;;
+    *) printf '%s' "$download_url"; return 0 ;;
+  esac
+
+  rest="${download_url#https://raw.githubusercontent.com/}"
+  rest="${rest%%\?*}"
+  IFS=/ read -r owner repo ref path <<< "$rest"
+  if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$ref" ] || [ -z "$path" ]; then
+    return 1
+  fi
+
+  # A commit URL is already immutable and cannot be stale.
+  if [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    printf '%s' "$download_url"
+    return 0
+  fi
+
+  # Resolve a moving branch name through the GitHub API, then download by SHA.
+  api_url="https://api.github.com/repos/${owner}/${repo}/commits/${ref}"
+  if ! api_file="$(mktemp "${TMPDIR:-/tmp}/add_key-api.XXXXXX" 2>/dev/null)"; then
+    return 1
+  fi
+  if ! curl -fsSL --connect-timeout 10 --max-time 30 "$api_url" -o "$api_file"; then
+    rm -f "$api_file"
+    return 1
+  fi
+  commit_sha="$(awk -F'"' '/^[[:space:]]*"sha"[[:space:]]*:/ {print $4; exit}' "$api_file")"
+  rm -f "$api_file"
+  if ! [[ "$commit_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    return 1
+  fi
+
+  printf 'https://raw.githubusercontent.com/%s/%s/%s/%s' "$owner" "$repo" "$commit_sha" "$path"
+}
+
 main_update() {
   local input_url="$UPDATE_URL"
   local download_url
+  local fresh_download_url
   local target_file="${SCRIPT_DIR}/add_key.sh"
   local tmp_file
   local file_mode
@@ -466,8 +508,14 @@ main_update() {
     return 1
   fi
 
+  if ! fresh_download_url="$(resolve_fresh_github_url "$download_url")"; then
+    rm -f "$tmp_file"
+    echo "Ошибка: не удалось определить актуальную версию ветки GitHub."
+    return 1
+  fi
+
   echo "Проверяю обновление: $download_url"
-  if ! curl -fsSL --connect-timeout 10 --max-time 60 "$download_url" -o "$tmp_file"; then
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 "$fresh_download_url" -o "$tmp_file"; then
     rm -f "$tmp_file"
     echo "Ошибка: не удалось скачать add_key.sh с GitHub."
     return 1
