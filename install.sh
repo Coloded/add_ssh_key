@@ -11,6 +11,7 @@ PERSONAL_LINK="${HOME}/.local/bin/add_key"
 USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/add_key"
 USER_CONFIG_FILE="${USER_CONFIG_DIR}/config"
 SHELL_NAME="$(basename "${SHELL:-sh}")"
+FORCE_INSTALL="${ADD_KEY_FORCE_INSTALL:-0}"
 USE_SUDO=0
 
 choose_install_scope() {
@@ -85,6 +86,28 @@ download_file() {
   fi
 }
 
+confirm_overwrite() {
+  local choice
+
+  if [ "$FORCE_INSTALL" = "1" ]; then
+    return 0
+  fi
+  if ! { exec 3<>/dev/tty; } 2>/dev/null; then
+    echo "Ошибка: существующая установка требует подтверждения в терминале."
+    echo "Для автоматической перезаписи задайте ADD_KEY_FORCE_INSTALL=1."
+    return 1
+  fi
+  while :; do
+    printf "Перезаписать существующую установку? [y/N]: " >&3
+    IFS= read -r choice <&3 || choice=""
+    case "$choice" in
+      y|Y|yes|YES|Yes|д|Д|да|ДА|Да) exec 3>&-; return 0 ;;
+      ""|n|N|no|NO|No|н|Н|нет|НЕТ|Нет) exec 3>&-; return 1 ;;
+      *) echo "Введите y или n." >&3 ;;
+    esac
+  done
+}
+
 choose_install_scope
 
 if [ -n "${ADD_KEY_INSTALL_DIR:-}" ]; then
@@ -146,18 +169,49 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-run_install mkdir -p "$INSTALL_DIR"
+if { [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; } && [ ! -d "$INSTALL_DIR" ]; then
+  echo "Ошибка: $INSTALL_DIR существует, но не является каталогом."
+  exit 1
+fi
+if [ ! -d "$INSTALL_DIR" ]; then
+  run_install mkdir -p "$INSTALL_DIR"
+fi
 
+NEEDS_CONFIRM=0
+TARGET_UNCHANGED=0
 if [ -f "$TARGET_FILE" ] && cmp -s "$TARGET_FILE" "$tmp_file"; then
   echo "Уже установлена последняя версия add_key: $version"
-  rm -f "$tmp_file"
+  TARGET_UNCHANGED=1
 else
+  if [ -e "$TARGET_FILE" ] || [ -L "$TARGET_FILE" ]; then
+    if [ -d "$TARGET_FILE" ]; then
+      echo "Ошибка: вместо файла обнаружен каталог: $TARGET_FILE"
+      exit 1
+    fi
+    existing_version="$(awk -F'"' '/^ADD_KEY_VERSION=/{print $2; exit}' "$TARGET_FILE" 2>/dev/null || true)"
+    echo "Обнаружена существующая установка: $TARGET_FILE"
+    if [ -n "$existing_version" ]; then
+      echo "Установлена версия: $existing_version; новая версия: $version"
+    fi
+    NEEDS_CONFIRM=1
+  fi
+fi
+if { [ -e "$COMMAND_LINK" ] || [ -L "$COMMAND_LINK" ]; } && \
+   { [ ! -L "$COMMAND_LINK" ] || [ "$(readlink "$COMMAND_LINK" 2>/dev/null || true)" != "add_key.sh" ]; }; then
+  echo "Также существует другая команда: $COMMAND_LINK"
+  NEEDS_CONFIRM=1
+fi
+if [ "$NEEDS_CONFIRM" -eq 1 ] && ! confirm_overwrite; then
+  echo "Установка отменена: существующие файлы не изменены."
+  exit 0
+fi
+if [ "$TARGET_UNCHANGED" -eq 0 ]; then
   if [ -f "$TARGET_FILE" ]; then
     run_install cp "$TARGET_FILE" "${TARGET_FILE}.install-backup"
   fi
   run_install install -m 755 "$tmp_file" "$TARGET_FILE"
-  rm -f "$tmp_file"
 fi
+rm -f "$tmp_file"
 
 run_install ln -sfn "add_key.sh" "$COMMAND_LINK"
 
