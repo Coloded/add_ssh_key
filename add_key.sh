@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ADD_KEY_VERSION="2026.08.25.5"
+ADD_KEY_VERSION="2026.08.25.6"
 
 # Remember explicit environment values so that the precedence remains:
 # command line > environment > config file > built-in defaults.
@@ -475,15 +475,24 @@ resolve_fresh_github_url() {
   printf 'https://raw.githubusercontent.com/%s/%s/%s/%s' "$owner" "$repo" "$commit_sha" "$path"
 }
 
+with_cache_buster() {
+  local url="$1"
+  case "$url" in
+    http://*|https://*) printf '%s?ts=%s' "$url" "$(date +%s)" ;;
+    *) printf '%s' "$url" ;;
+  esac
+}
+
 main_update() {
   local input_url="$UPDATE_URL"
   local download_url
   local fresh_download_url
   local target_file="${SCRIPT_DIR}/add_key.sh"
   local tmp_file
-  local file_mode
+  local tmp_installer
+  local installer_url
+  local install_scope
   local remote_version
-  local use_sudo=0
 
   if [ -z "$input_url" ]; then
     if [ ! -t 0 ]; then
@@ -515,7 +524,7 @@ main_update() {
   fi
 
   echo "Проверяю обновление: $download_url"
-  if ! curl -fsSL --connect-timeout 10 --max-time 60 "$fresh_download_url" -o "$tmp_file"; then
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 "$(with_cache_buster "$fresh_download_url")" -o "$tmp_file"; then
     rm -f "$tmp_file"
     echo "Ошибка: не удалось скачать add_key.sh с GitHub."
     return 1
@@ -551,36 +560,42 @@ main_update() {
     return 0
   fi
 
-  file_mode="$(stat -f '%Lp' "$target_file" 2>/dev/null || stat -c '%a' "$target_file" 2>/dev/null || printf '755')"
-  chmod "$file_mode" "$tmp_file"
-  if [ ! -w "$(dirname "$target_file")" ]; then
-    if ! command -v sudo >/dev/null 2>&1; then
-      rm -f "$tmp_file"
-      echo "Ошибка: для системного обновления нужен sudo."
-      return 1
-    fi
-    use_sudo=1
+  echo "Доступна новая версия: $ADD_KEY_VERSION → $remote_version"
+  if ! tmp_installer="$(mktemp "${TMPDIR:-/tmp}/add_key-installer.XXXXXX" 2>/dev/null)"; then
+    rm -f "$tmp_file"
+    echo "Ошибка: не удалось создать временный файл установщика."
+    return 1
+  fi
+  installer_url="${fresh_download_url%/*}/install.sh"
+  echo "Скачиваю installer..."
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 "$(with_cache_buster "$installer_url")" -o "$tmp_installer"; then
+    rm -f "$tmp_file" "$tmp_installer"
+    echo "Ошибка: не удалось скачать install.sh с GitHub."
+    return 1
+  fi
+  if ! head -n 1 "$tmp_installer" | grep -Eq '^#!.*bash' || ! bash -n "$tmp_installer"; then
+    rm -f "$tmp_file" "$tmp_installer"
+    echo "Ошибка: загруженный install.sh не прошёл проверку."
+    return 1
   fi
 
-  if [ "$use_sudo" -eq 1 ]; then
-    sudo cp "$target_file" "${target_file}.update-backup"
-    if ! sudo install -m "$file_mode" "$tmp_file" "$target_file"; then
-      rm -f "$tmp_file"
-      echo "Ошибка: не удалось установить обновление."
-      return 1
-    fi
-  else
-    cp "$target_file" "${target_file}.update-backup"
-    if ! install -m "$file_mode" "$tmp_file" "$target_file"; then
-      rm -f "$tmp_file"
-      echo "Ошибка: не удалось установить обновление."
-      return 1
-    fi
-  fi
-  rm -f "$tmp_file"
+  case "$SCRIPT_DIR" in
+    "${HOME}"/*) install_scope="user" ;;
+    *) install_scope="system" ;;
+  esac
 
-  echo "add_key обновлён: $ADD_KEY_VERSION → $remote_version"
-  echo "Backup: ${target_file}.update-backup"
+  echo "Запускаю installer..."
+  echo "Обновляю каталог установки: $SCRIPT_DIR"
+  if ! ADD_KEY_INSTALL_SCOPE="$install_scope" \
+       ADD_KEY_INSTALL_DIR="$SCRIPT_DIR" \
+       ADD_KEY_SOURCE_URL="$fresh_download_url" \
+       ADD_KEY_FORCE_INSTALL=1 \
+       bash "$tmp_installer"; then
+    rm -f "$tmp_file" "$tmp_installer"
+    echo "Ошибка: install.sh не смог установить обновление."
+    return 1
+  fi
+  rm -f "$tmp_file" "$tmp_installer"
 }
 
 validate_inputs() {
