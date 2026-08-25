@@ -1,16 +1,26 @@
 # add_ssh_key
 
-Интерактивная установка существующего локального SSH-ключа на Unix/Linux,
-OpenWrt/Dropbear и MikroTik RouterOS.
+Интерактивная установка существующего локального SSH-ключа на удалённые
+Unix/Linux, OpenWrt/Dropbear и MikroTik RouterOS.
 
-## Установка на новый Mac
+Установщик самого `add_key` поддерживает macOS и Linux, включая Ubuntu и
+Debian. Поддерживаются оболочки Zsh, Bash, Fish и POSIX-совместимые shell.
+
+## Новая установка
+
+Через `curl`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Coloded/add_ssh_key/main/install.sh | bash
-source ~/.zshrc
 ```
 
-Затем:
+Или через `wget`:
+
+```bash
+wget -qO- https://raw.githubusercontent.com/Coloded/add_ssh_key/main/install.sh | bash
+```
+
+Откройте новый терминал, затем:
 
 ```bash
 add_key
