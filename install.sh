@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SOURCE_URL="${ADD_KEY_SOURCE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/main/add_key.sh}"
+SOURCE_URL="${ADD_KEY_SOURCE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/aff1097/add_key.sh}"
 INSTALL_SCOPE="${ADD_KEY_INSTALL_SCOPE:-}"
 LEGACY_LINK="${HOME}/script/add_key"
 LEGACY_CONFIG="${HOME}/script/add_server_ssh.conf"
