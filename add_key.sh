@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ADD_KEY_VERSION="2026.08.25.2"
+ADD_KEY_VERSION="2026.08.25.3"
 
 # Remember explicit environment values so that the precedence remains:
 # command line > environment > config file > built-in defaults.

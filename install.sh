@@ -3,20 +3,27 @@
 set -euo pipefail
 
 SOURCE_URL="${ADD_KEY_SOURCE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/main/add_key.sh}"
-INSTALL_DIR="${ADD_KEY_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${ADD_KEY_INSTALL_DIR:-${HOME}/.local/bin}"
 TARGET_FILE="${INSTALL_DIR}/add_key.sh"
 COMMAND_LINK="${INSTALL_DIR}/add_key"
 LEGACY_LINK="${HOME}/script/add_key"
 LEGACY_CONFIG="${HOME}/script/add_server_ssh.conf"
 USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/add_key"
 USER_CONFIG_FILE="${USER_CONFIG_DIR}/config"
-USE_SUDO=0
+SHELL_NAME="$(basename "${SHELL:-sh}")"
 
-run_install() {
-  if [ "$USE_SUDO" -eq 1 ]; then
-    sudo "$@"
-  else
-    "$@"
+add_path_line() {
+  local config_file="$1"
+  local path_line='export PATH="$HOME/.local/bin:$PATH"'
+
+  mkdir -p "$(dirname "$config_file")"
+  touch "$config_file"
+  if ! grep -Fqx "$path_line" "$config_file"; then
+    {
+      echo
+      echo '# add_key command'
+      echo "$path_line"
+    } >> "$config_file"
   fi
 }
 
@@ -49,28 +56,20 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
-if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
-  if ! command -v sudo >/dev/null 2>&1; then
-    echo "Ошибка: для системной установки в $INSTALL_DIR нужен sudo."
-    exit 1
-  fi
-  USE_SUDO=1
-fi
-
-run_install mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR"
 
 if [ -f "$TARGET_FILE" ] && cmp -s "$TARGET_FILE" "$tmp_file"; then
   echo "Уже установлена последняя версия add_key: $version"
   rm -f "$tmp_file"
 else
   if [ -f "$TARGET_FILE" ]; then
-    run_install cp "$TARGET_FILE" "${TARGET_FILE}.install-backup"
+    cp "$TARGET_FILE" "${TARGET_FILE}.install-backup"
   fi
-  run_install install -m 755 "$tmp_file" "$TARGET_FILE"
+  install -m 755 "$tmp_file" "$TARGET_FILE"
   rm -f "$tmp_file"
 fi
 
-run_install ln -sfn "add_key.sh" "$COMMAND_LINK"
+ln -sfn "add_key.sh" "$COMMAND_LINK"
 
 if [ -f "$LEGACY_CONFIG" ] && [ ! -e "$USER_CONFIG_FILE" ]; then
   mkdir -p "$USER_CONFIG_DIR"
@@ -84,11 +83,42 @@ if [ -L "$LEGACY_LINK" ] && [ "$(readlink "$LEGACY_LINK" 2>/dev/null || true)" =
   echo "Удалена старая пользовательская команда: $LEGACY_LINK"
 fi
 
+case "$SHELL_NAME" in
+  zsh)
+    SHELL_CONFIG="${HOME}/.zshrc"
+    add_path_line "$SHELL_CONFIG"
+    ;;
+  bash)
+    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+      SHELL_CONFIG="${HOME}/.bash_profile"
+    else
+      SHELL_CONFIG="${HOME}/.bashrc"
+    fi
+    add_path_line "$SHELL_CONFIG"
+    ;;
+  fish)
+    SHELL_CONFIG="${HOME}/.config/fish/config.fish"
+    mkdir -p "$(dirname "$SHELL_CONFIG")"
+    touch "$SHELL_CONFIG"
+    FISH_PATH_LINE='fish_add_path "$HOME/.local/bin"'
+    grep -Fqx "$FISH_PATH_LINE" "$SHELL_CONFIG" || printf '\n# add_key command\n%s\n' "$FISH_PATH_LINE" >> "$SHELL_CONFIG"
+    ;;
+  *)
+    SHELL_CONFIG="${HOME}/.profile"
+    add_path_line "$SHELL_CONFIG"
+    ;;
+esac
+
 trap - EXIT
 echo "add_key $version установлен в $INSTALL_DIR"
 echo
-echo "Системная команда установлена: $COMMAND_LINK"
-echo "Если shell запомнил старый путь, открой новый терминал или выполни: hash -r"
+echo "Команда установлена для текущего пользователя: $COMMAND_LINK"
+echo "Открой новый терминал или выполни:"
+if [ "$SHELL_NAME" = "fish" ]; then
+  echo "  source $SHELL_CONFIG"
+else
+  echo "  . $SHELL_CONFIG"
+fi
 echo
 echo "Доступны команды:"
 echo "  add_key"

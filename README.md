@@ -26,15 +26,15 @@ wget -qO- https://raw.githubusercontent.com/Coloded/add_ssh_key/main/install.sh 
 add_key
 ```
 
-Скрипт устанавливается системно:
+Скрипт устанавливается для текущего пользователя:
 
 ```text
-/usr/local/bin/add_key.sh
-/usr/local/bin/add_key -> add_key.sh
+~/.local/bin/add_key.sh
+~/.local/bin/add_key -> add_key.sh
 ```
 
-При необходимости установщик запросит пароль `sudo`. Пользовательские
-настройки хранятся отдельно в `~/.config/add_key/config`.
+Команда работает из любого каталога, установка и обновление не требуют
+`sudo`. Пользовательские настройки хранятся в `~/.config/add_key/config`.
 
 ## Обновление
 
@@ -45,4 +45,4 @@ add_key -update
 Команда скачивает `add_key.sh` из этого репозитория, проверяет Bash-синтаксис
 и номер версии, сравнивает его с установленным файлом и устанавливает только
 изменившуюся версию. Предыдущий файл сохраняется как
-`/usr/local/bin/add_key.sh.update-backup`.
+`~/.local/bin/add_key.sh.update-backup`.
