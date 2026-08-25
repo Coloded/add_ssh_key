@@ -3,32 +3,24 @@
 set -euo pipefail
 
 SOURCE_URL="${ADD_KEY_SOURCE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/main/add_key.sh}"
-INSTALL_DIR="${ADD_KEY_INSTALL_DIR:-${HOME}/script}"
+INSTALL_DIR="${ADD_KEY_INSTALL_DIR:-/usr/local/bin}"
 TARGET_FILE="${INSTALL_DIR}/add_key.sh"
 COMMAND_LINK="${INSTALL_DIR}/add_key"
-SHELL_NAME="$(basename "${SHELL:-sh}")"
+LEGACY_LINK="${HOME}/script/add_key"
+LEGACY_CONFIG="${HOME}/script/add_server_ssh.conf"
+USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/add_key"
+USER_CONFIG_FILE="${USER_CONFIG_DIR}/config"
+USE_SUDO=0
 
-if [ "$INSTALL_DIR" = "${HOME}/script" ]; then
-  PATH_LINE='export PATH="$HOME/script:$PATH"'
-else
-  PATH_LINE="export PATH=\"${INSTALL_DIR}:\$PATH\""
-fi
-
-add_path_line() {
-  local config_file="$1"
-
-  touch "$config_file"
-  if ! grep -Fqx "$PATH_LINE" "$config_file"; then
-    {
-      echo
-      echo '# add_key command'
-      echo "$PATH_LINE"
-    } >> "$config_file"
+run_install() {
+  if [ "$USE_SUDO" -eq 1 ]; then
+    sudo "$@"
+  else
+    "$@"
   fi
 }
 
-mkdir -p "$INSTALL_DIR"
-tmp_file="$(mktemp "${INSTALL_DIR}/.add_key-install.XXXXXX")"
+tmp_file="$(mktemp "${TMPDIR:-/tmp}/add_key-install.XXXXXX")"
 trap 'rm -f "$tmp_file"' EXIT
 
 echo "Скачиваю add_key с GitHub..."
@@ -57,54 +49,47 @@ if [ -z "$version" ]; then
   exit 1
 fi
 
+if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "Ошибка: для системной установки в $INSTALL_DIR нужен sudo."
+    exit 1
+  fi
+  USE_SUDO=1
+fi
+
+run_install mkdir -p "$INSTALL_DIR"
+
 if [ -f "$TARGET_FILE" ] && cmp -s "$TARGET_FILE" "$tmp_file"; then
   echo "Уже установлена последняя версия add_key: $version"
   rm -f "$tmp_file"
 else
   if [ -f "$TARGET_FILE" ]; then
-    cp "$TARGET_FILE" "${TARGET_FILE}.install-backup"
+    run_install cp "$TARGET_FILE" "${TARGET_FILE}.install-backup"
   fi
-  chmod 755 "$tmp_file"
-  mv "$tmp_file" "$TARGET_FILE"
+  run_install install -m 755 "$tmp_file" "$TARGET_FILE"
+  rm -f "$tmp_file"
 fi
 
-ln -sfn "add_key.sh" "$COMMAND_LINK"
+run_install ln -sfn "add_key.sh" "$COMMAND_LINK"
 
-case "$SHELL_NAME" in
-  zsh)
-    SHELL_CONFIG="${HOME}/.zshrc"
-    add_path_line "$SHELL_CONFIG"
-    ;;
-  bash)
-    SHELL_CONFIG="${HOME}/.bashrc"
-    add_path_line "$SHELL_CONFIG"
-    if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
-      add_path_line "${HOME}/.bash_profile"
-    fi
-    ;;
-  fish)
-    SHELL_CONFIG="${HOME}/.config/fish/config.fish"
-    mkdir -p "$(dirname "$SHELL_CONFIG")"
-    FISH_PATH_LINE="fish_add_path \"${INSTALL_DIR}\""
-    touch "$SHELL_CONFIG"
-    grep -Fqx "$FISH_PATH_LINE" "$SHELL_CONFIG" || printf '\n# add_key command\n%s\n' "$FISH_PATH_LINE" >> "$SHELL_CONFIG"
-    ;;
-  *)
-    SHELL_CONFIG="${HOME}/.profile"
-    add_path_line "$SHELL_CONFIG"
-    ;;
-esac
+if [ -f "$LEGACY_CONFIG" ] && [ ! -e "$USER_CONFIG_FILE" ]; then
+  mkdir -p "$USER_CONFIG_DIR"
+  cp "$LEGACY_CONFIG" "$USER_CONFIG_FILE"
+  chmod 600 "$USER_CONFIG_FILE"
+  echo "Настройки перенесены в $USER_CONFIG_FILE"
+fi
+
+if [ -L "$LEGACY_LINK" ] && [ "$(readlink "$LEGACY_LINK" 2>/dev/null || true)" = "add_key.sh" ]; then
+  rm -f "$LEGACY_LINK"
+  echo "Удалена старая пользовательская команда: $LEGACY_LINK"
+fi
 
 trap - EXIT
 echo "add_key $version установлен в $INSTALL_DIR"
 echo
-echo "Открой новый терминал или выполни:"
-if [ "$SHELL_NAME" = "fish" ]; then
-  echo "  source $SHELL_CONFIG"
-else
-  echo "  . $SHELL_CONFIG"
-fi
+echo "Системная команда установлена: $COMMAND_LINK"
+echo "Если shell запомнил старый путь, открой новый терминал или выполни: hash -r"
 echo
-echo "После этого доступны команды:"
+echo "Доступны команды:"
 echo "  add_key"
 echo "  add_key -update"

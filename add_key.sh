@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ADD_KEY_VERSION="2026.08.25.1"
+ADD_KEY_VERSION="2026.08.25.2"
 
 # Remember explicit environment values so that the precedence remains:
 # command line > environment > config file > built-in defaults.
@@ -24,8 +24,25 @@ ENV_BULK_KEY_FILE_SET="${BULK_KEY_FILE+x}"; ENV_BULK_KEY_FILE_VALUE="${BULK_KEY_
 ENV_UPDATE_URL_SET="${UPDATE_URL+x}"; ENV_UPDATE_URL_VALUE="${UPDATE_URL-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/add_server_ssh.conf}"
-BULK_CONFIG_FILE="${BULK_CONFIG_FILE:-${SCRIPT_DIR}/passwords/servers.json}"
+USER_CONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/add_key"
+if [ -f "${SCRIPT_DIR}/add_server_ssh.conf" ]; then
+  DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/add_server_ssh.conf"
+elif [ -f "${USER_CONFIG_DIR}/config" ]; then
+  DEFAULT_CONFIG_FILE="${USER_CONFIG_DIR}/config"
+elif [ -f "${HOME}/script/add_server_ssh.conf" ]; then
+  DEFAULT_CONFIG_FILE="${HOME}/script/add_server_ssh.conf"
+else
+  DEFAULT_CONFIG_FILE="${USER_CONFIG_DIR}/config"
+fi
+CONFIG_FILE="${CONFIG_FILE:-${DEFAULT_CONFIG_FILE}}"
+if [ -f "${SCRIPT_DIR}/passwords/servers.json" ]; then
+  DEFAULT_BULK_CONFIG_FILE="${SCRIPT_DIR}/passwords/servers.json"
+elif [ -f "${HOME}/script/passwords/servers.json" ]; then
+  DEFAULT_BULK_CONFIG_FILE="${HOME}/script/passwords/servers.json"
+else
+  DEFAULT_BULK_CONFIG_FILE="${USER_CONFIG_DIR}/servers.json"
+fi
+BULK_CONFIG_FILE="${BULK_CONFIG_FILE:-${DEFAULT_BULK_CONFIG_FILE}}"
 BULK_STRICT_EXIT="${BULK_STRICT_EXIT:-0}"
 BULK_KEY_FILE="${BULK_KEY_FILE:-}"
 UPDATE_URL="${UPDATE_URL:-https://raw.githubusercontent.com/Coloded/add_ssh_key/main/add_key.sh}"
@@ -331,6 +348,10 @@ save_config_value() {
 
   escaped_value="${config_value//\\/\\\\}"
   escaped_value="${escaped_value//\"/\\\"}"
+  if ! mkdir -p "$(dirname "$CONFIG_FILE")" 2>/dev/null; then
+    echo "Предупреждение: не удалось создать каталог настроек для $CONFIG_FILE" >&2
+    return 0
+  fi
   if ! tmp_file="$(mktemp "${CONFIG_FILE}.tmp.XXXXXX" 2>/dev/null)"; then
     echo "Предупреждение: не удалось сохранить $config_key в $CONFIG_FILE" >&2
     return 0
@@ -420,6 +441,7 @@ main_update() {
   local tmp_file
   local file_mode
   local remote_version
+  local use_sudo=0
 
   if [ -z "$input_url" ]; then
     if [ ! -t 0 ]; then
@@ -439,8 +461,8 @@ main_update() {
     return 1
   fi
 
-  if ! tmp_file="$(mktemp "${SCRIPT_DIR}/.add_key-update.XXXXXX" 2>/dev/null)"; then
-    echo "Ошибка: нет прав на обновление в ${SCRIPT_DIR}"
+  if ! tmp_file="$(mktemp "${TMPDIR:-/tmp}/add_key-update.XXXXXX" 2>/dev/null)"; then
+    echo "Ошибка: не удалось создать временный файл обновления."
     return 1
   fi
 
@@ -483,12 +505,31 @@ main_update() {
 
   file_mode="$(stat -f '%Lp' "$target_file" 2>/dev/null || stat -c '%a' "$target_file" 2>/dev/null || printf '755')"
   chmod "$file_mode" "$tmp_file"
-  cp "$target_file" "${target_file}.update-backup"
-  if ! mv "$tmp_file" "$target_file"; then
-    rm -f "$tmp_file"
-    echo "Ошибка: не удалось установить обновление."
-    return 1
+  if [ ! -w "$(dirname "$target_file")" ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      rm -f "$tmp_file"
+      echo "Ошибка: для системного обновления нужен sudo."
+      return 1
+    fi
+    use_sudo=1
   fi
+
+  if [ "$use_sudo" -eq 1 ]; then
+    sudo cp "$target_file" "${target_file}.update-backup"
+    if ! sudo install -m "$file_mode" "$tmp_file" "$target_file"; then
+      rm -f "$tmp_file"
+      echo "Ошибка: не удалось установить обновление."
+      return 1
+    fi
+  else
+    cp "$target_file" "${target_file}.update-backup"
+    if ! install -m "$file_mode" "$tmp_file" "$target_file"; then
+      rm -f "$tmp_file"
+      echo "Ошибка: не удалось установить обновление."
+      return 1
+    fi
+  fi
+  rm -f "$tmp_file"
 
   echo "add_key обновлён: $ADD_KEY_VERSION → $remote_version"
   echo "Backup: ${target_file}.update-backup"
